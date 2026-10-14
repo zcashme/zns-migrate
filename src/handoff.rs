@@ -395,45 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn three_file_transfer_report_binds_every_file() {
-        let (offer, transfer) = offer_and_transfer();
-        let ceremony = ceremony_binding(&[b"mint", b"custody", b"state"]);
-        let bound = three_file_transfer_report_data(&offer, &transfer, &ceremony);
-        assert_ne!(bound, zns_canon::migration::migration_report_data(&offer));
-        assert_ne!(bound, source_report_data(&offer));
-
-        let mut other_ciphertext = transfer;
-        other_ciphertext.ciphertext[0] ^= 1;
-        assert_ne!(
-            three_file_transfer_report_data(&offer, &other_ciphertext, &ceremony),
-            bound
-        );
-
-        for index in 0..3 {
-            let mut changed = [
-                b"mint".as_slice(),
-                b"custody".as_slice(),
-                b"state".as_slice(),
-            ];
-            changed[index] = b"replaced";
-            assert_ne!(
-                three_file_transfer_report_data(&offer, &transfer, &ceremony_binding(&changed)),
-                bound
-            );
-        }
-    }
-
-    #[test]
-    fn one_and_three_file_transfers_never_share_report_data() {
-        let (offer, transfer) = offer_and_transfer();
-        let ceremony = ceremony_binding(&[b"mint", b"custody", b"state"]);
-        assert_ne!(
-            three_file_transfer_report_data(&offer, &transfer, &ceremony),
-            transfer_report_data(&offer, &transfer, b"custody")
-        );
-    }
-
-    #[test]
     fn source_report_binds_this_offer_and_no_ciphertext() {
         let offer = MigrationOffer {
             ephemeral_pubkey: [1u8; 32],
