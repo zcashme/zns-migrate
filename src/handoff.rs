@@ -20,15 +20,11 @@ pub use zns_canon::migration::TRANSFER_LEN;
 /// requests this report before unsealing and does not publish it.
 pub const SOURCE_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_SOURCE_V1";
 
-/// Domain separation for [`transfer_report_data`]: the transfer binds the
-/// custody manifest alone.
+/// Domain separation for [`transfer_report_data`] and
+/// [`three_file_transfer_report_data`].
 ///
 /// Distinct from `ZNS_MIGRATION_V1`, which binds only the target's offer.
-pub const TRANSFER_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_TRANSFER_V2";
-
-/// Domain separation for [`legacy_transfer_report_data`]: the transfer a
-/// v0.2.1 source attests, binding three ceremony files.
-pub const LEGACY_TRANSFER_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_TRANSFER_V1";
+pub const TRANSFER_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_TRANSFER_V1";
 
 /// Domain separation for [`receipt_report_data`].
 ///
@@ -91,7 +87,7 @@ pub fn source_report_data(offer: &MigrationOffer) -> [u8; REPORT_DATA_LEN] {
     blake2b_512(&input)
 }
 
-/// `BLAKE2b-512(b"ZNS_MIGRATION_TRANSFER_V2" || offer || transfer || BLAKE2b-256(custody_manifest))`.
+/// `BLAKE2b-512(b"ZNS_MIGRATION_TRANSFER_V1" || offer || transfer || BLAKE2b-256(custody_manifest))`.
 ///
 /// The source passes this to `get_attestation` after building the
 /// ciphertext. The target accepts a transfer only when its report matches
@@ -116,12 +112,13 @@ pub fn transfer_report_data(
 }
 
 /// `BLAKE2b-512(b"ZNS_MIGRATION_TRANSFER_V1" || offer || transfer || ceremony)`,
-/// the transfer a v0.2.1 source attests.
+/// what a source that sends three ceremony files attests.
 ///
 /// `ceremony` is the BLAKE2b-256 of `zns_mint.conf`, then
-/// `zns_custody_manifest.toml`, then `ceremony_state.toml`. The target
-/// checks this binding when it receives from such a source.
-pub fn legacy_transfer_report_data(
+/// `zns_custody_manifest.toml`, then `ceremony_state.toml`. Same domain as
+/// [`transfer_report_data`]; the two inputs differ in length after a
+/// fixed-length prefix, so they never share report data.
+pub fn three_file_transfer_report_data(
     offer: &MigrationOffer,
     transfer: &EncryptedSeedTransfer,
     ceremony: &[[u8; 32]; 3],
@@ -129,9 +126,9 @@ pub fn legacy_transfer_report_data(
     let offer_bytes = encode_offer(offer);
     let transfer_bytes = encode_transfer(transfer);
     let mut input = Vec::with_capacity(
-        LEGACY_TRANSFER_REPORT_DOMAIN.len() + offer_bytes.len() + transfer_bytes.len() + 32 * 3,
+        TRANSFER_REPORT_DOMAIN.len() + offer_bytes.len() + transfer_bytes.len() + 32 * 3,
     );
-    input.extend_from_slice(LEGACY_TRANSFER_REPORT_DOMAIN);
+    input.extend_from_slice(TRANSFER_REPORT_DOMAIN);
     input.extend_from_slice(&offer_bytes);
     input.extend_from_slice(&transfer_bytes);
     for hash in ceremony {
@@ -140,7 +137,7 @@ pub fn legacy_transfer_report_data(
     blake2b_512(&input)
 }
 
-/// BLAKE2b-256 of each legacy ceremony file, in channel order.
+/// BLAKE2b-256 of each of the three ceremony files, in channel order.
 pub fn ceremony_binding(files: &[&[u8]; 3]) -> [[u8; 32]; 3] {
     files.map(blake2b_256)
 }
@@ -398,17 +395,17 @@ mod tests {
     }
 
     #[test]
-    fn legacy_transfer_report_binds_all_three_ceremony_files() {
+    fn three_file_transfer_report_binds_every_file() {
         let (offer, transfer) = offer_and_transfer();
         let ceremony = ceremony_binding(&[b"mint", b"custody", b"state"]);
-        let bound = legacy_transfer_report_data(&offer, &transfer, &ceremony);
+        let bound = three_file_transfer_report_data(&offer, &transfer, &ceremony);
         assert_ne!(bound, zns_canon::migration::migration_report_data(&offer));
         assert_ne!(bound, source_report_data(&offer));
 
         let mut other_ciphertext = transfer;
         other_ciphertext.ciphertext[0] ^= 1;
         assert_ne!(
-            legacy_transfer_report_data(&offer, &other_ciphertext, &ceremony),
+            three_file_transfer_report_data(&offer, &other_ciphertext, &ceremony),
             bound
         );
 
@@ -420,18 +417,18 @@ mod tests {
             ];
             changed[index] = b"replaced";
             assert_ne!(
-                legacy_transfer_report_data(&offer, &transfer, &ceremony_binding(&changed)),
+                three_file_transfer_report_data(&offer, &transfer, &ceremony_binding(&changed)),
                 bound
             );
         }
     }
 
     #[test]
-    fn legacy_and_current_transfers_never_share_report_data() {
+    fn one_and_three_file_transfers_never_share_report_data() {
         let (offer, transfer) = offer_and_transfer();
         let ceremony = ceremony_binding(&[b"mint", b"custody", b"state"]);
         assert_ne!(
-            legacy_transfer_report_data(&offer, &transfer, &ceremony),
+            three_file_transfer_report_data(&offer, &transfer, &ceremony),
             transfer_report_data(&offer, &transfer, b"custody")
         );
     }

@@ -1,14 +1,12 @@
 //! M2. The attested ephemeral key is published before any seed arrives.
 //!
-//! A source publishes the custody manifest and binds it
-//! (`ZNS_MIGRATION_TRANSFER_V2`). A v0.2.1 source instead publishes three
-//! ceremony files, `zns_mint.conf` first, and binds all three
-//! (`ZNS_MIGRATION_TRANSFER_V1`); `zns_mint.conf` in the channel selects that
-//! binding. Either way a transfer is decrypted only after the source
+//! A source publishes the custody manifest and binds it. An older source
+//! instead publishes three ceremony files, `zns_mint.conf` first, and binds
+//! all three; `zns_mint.conf` in the channel selects that binding. Either way a transfer is decrypted only after the source
 //! attestation matches this offer, this ciphertext, and those files, and that
 //! report's measurement is `from_measurement` and its guest policy is
 //! `from_guest_policy`. The files are received before the capsule is linked
-//! into place. Only the custody manifest is written beside it; a v0.2.1
+//! into place. Only the custody manifest is written beside it; an older
 //! source's `zns_mint.conf` and `ceremony_state.toml` are checked, then
 //! dropped. The capsule is read back and unsealed. The receipt is written
 //! only when that reopened seed matches the one just decrypted. The receipt
@@ -90,13 +88,13 @@ pub fn run(
     let source_report = transport.wait_source_attestation()?;
     let custody_manifest = transport.wait_ceremony(transport::CUSTODY_MANIFEST_FILE)?;
     let transfer = handoff::decode_transfer(&transfer_bytes)?;
-    // A v0.2.1 source publishes zns_mint.conf before the manifest; a current
-    // source never publishes it. A planted conf only selects a binding the
+    // A three-file source publishes zns_mint.conf before the manifest; a
+    // manifest-only source never publishes it. A planted conf only selects a binding the
     // source report then fails.
     let expected = if transport.has_ceremony(transport::MINT_CONF_FILE)? {
         let mint_conf = transport.wait_ceremony(transport::MINT_CONF_FILE)?;
         let ceremony_state = transport.wait_ceremony(transport::CEREMONY_STATE_FILE)?;
-        handoff::legacy_transfer_report_data(
+        handoff::three_file_transfer_report_data(
             &offer,
             &transfer,
             &handoff::ceremony_binding(&[&mint_conf, &custody_manifest, &ceremony_state]),

@@ -30,7 +30,7 @@ unseals anything. The directory is an untrusted one-shot channel:
     receipt_attestation.bin
 
 Source copies the custody manifest in the open from the input capsule's
-directory. A v0.2.1 source publishes three ceremony files instead
+directory. An older source publishes three ceremony files instead
 (zns_mint.conf, the manifest, ceremony_state.toml); target accepts either,
 checks what it received against the source report, and writes only the
 custody manifest beside the output capsule. The seed stays sealed.

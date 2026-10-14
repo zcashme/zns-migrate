@@ -34,10 +34,9 @@ const ATTESTATION_MAX: usize = 4096;
 pub const CEREMONY_MAX: usize = 1024 * 1024;
 const POLL: Duration = Duration::from_millis(20);
 
-/// Ceremony files a v0.2.1 source publishes in the open, in this order. A
-/// target bound to such a source receives all three and installs only the
-/// custody manifest.
-pub const LEGACY_CEREMONY_FILES: &[&str] =
+/// The three ceremony files an older source publishes in the open, in this
+/// order. A target receiving them installs only the custody manifest.
+pub const THREE_CEREMONY_FILES: &[&str] =
     &[MINT_CONF_FILE, CUSTODY_MANIFEST_FILE, CEREMONY_STATE_FILE];
 
 const PROTOCOL_FILES: &[&str] = &[
@@ -150,7 +149,7 @@ impl DirTransport {
     }
 
     /// Copy one ceremony file in the open. The name is one of
-    /// [`LEGACY_CEREMONY_FILES`]; a source publishes only the custody manifest.
+    /// [`THREE_CEREMONY_FILES`]; a source publishes only the custody manifest.
     pub fn publish_ceremony(&self, name: &str, bytes: &[u8]) -> Result<(), MigrateError> {
         ceremony_name(name)?;
         if bytes.is_empty() || bytes.len() > CEREMONY_MAX {
@@ -280,7 +279,7 @@ impl DirTransport {
 }
 
 fn ceremony_name(name: &str) -> Result<(), MigrateError> {
-    if LEGACY_CEREMONY_FILES.contains(&name) {
+    if THREE_CEREMONY_FILES.contains(&name) {
         Ok(())
     } else {
         Err(MigrateError::transport(format!(
