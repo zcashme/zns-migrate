@@ -75,10 +75,9 @@ pub enum HandoffError {
 
 /// `BLAKE2b-512(b"ZNS_MIGRATION_SOURCE_V1" || offer)`.
 ///
-/// The source passes this to `get_attestation` before unsealing. The
-/// report's measurement must equal `from_measurement`. This report is not
-/// written to the channel. The published source attestation is
-/// [`transfer_report_data`], which binds the ciphertext and the custody manifest.
+/// The source passes this to `get_attestation` before unsealing; it is
+/// never written to the channel. The published source attestation is
+/// [`transfer_report_data`].
 pub fn source_report_data(offer: &MigrationOffer) -> [u8; REPORT_DATA_LEN] {
     let offer_bytes = encode_offer(offer);
     let mut input = Vec::with_capacity(SOURCE_REPORT_DOMAIN.len() + offer_bytes.len());
@@ -89,11 +88,8 @@ pub fn source_report_data(offer: &MigrationOffer) -> [u8; REPORT_DATA_LEN] {
 
 /// `BLAKE2b-512(b"ZNS_MIGRATION_TRANSFER_V1" || offer || transfer || BLAKE2b-256(custody_manifest))`.
 ///
-/// The source passes this to `get_attestation` after building the
-/// ciphertext. The target accepts a transfer only when its report matches
-/// these exact bytes, so a writer who encrypts some other seed, or replaces
-/// the custody manifest in the channel, cannot reuse or omit that
-/// attestation.
+/// The target decrypts only when the source report matches these bytes, so
+/// swapped seed or manifest in the channel fails the check.
 pub fn transfer_report_data(
     offer: &MigrationOffer,
     transfer: &EncryptedSeedTransfer,
@@ -112,12 +108,10 @@ pub fn transfer_report_data(
 }
 
 /// `BLAKE2b-512(b"ZNS_MIGRATION_TRANSFER_V1" || offer || transfer || ceremony)`,
-/// what a source that sends three ceremony files attests.
-///
-/// `ceremony` is the BLAKE2b-256 of `zns_mint.conf`, then
-/// `zns_custody_manifest.toml`, then `ceremony_state.toml`. Same domain as
-/// [`transfer_report_data`]; the two inputs differ in length after a
-/// fixed-length prefix, so they never share report data.
+/// for a source that sends the three ceremony files: `zns_mint.conf`, then
+/// the custody manifest, then `ceremony_state.toml`, each BLAKE2b-256.
+/// Different input length from [`transfer_report_data`], so they never
+/// share report data.
 pub fn three_file_transfer_report_data(
     offer: &MigrationOffer,
     transfer: &EncryptedSeedTransfer,

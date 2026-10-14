@@ -1,19 +1,13 @@
 //! M2. The attested ephemeral key is published before any seed arrives.
 //!
-//! A source publishes the custody manifest and binds it. An older source
-//! instead publishes three ceremony files, `zns_mint.conf` first, and binds
-//! all three; `zns_mint.conf` in the channel selects that binding. Either way a transfer is decrypted only after the source
-//! attestation matches this offer, this ciphertext, and those files, and that
-//! report's measurement is `from_measurement` and its guest policy is
-//! `from_guest_policy`. The files are received before the capsule is linked
-//! into place. Only the custody manifest is written beside it; an older
-//! source's `zns_mint.conf` and `ceremony_state.toml` are checked, then
-//! dropped. The capsule is read back and unsealed. The receipt is written
-//! only when that reopened seed matches the one just decrypted. The receipt
-//! is published with an attestation that binds this offer and this
-//! receipt, and only when that report's measurement is `to_measurement` and
-//! its guest policy is `to_guest_policy`. An existing capsule is left
-//! untouched unless the operator set `--replace-after-verified-migration`.
+//! A source publishes the custody manifest and binds it; an older source
+//! publishes three ceremony files, `zns_mint.conf` first, and binds all
+//! three. Presence of `zns_mint.conf` selects the binding. Either way the
+//! source report must match this offer, the ciphertext, and those files,
+//! with measurement `from_measurement` and the manifest's guest policy.
+//! Only the custody manifest is installed beside the new capsule. The
+//! receipt is published only after the resealed capsule unseals to the same
+//! seed, attested for `to_measurement`.
 
 use std::path::{Path, PathBuf};
 
@@ -88,8 +82,8 @@ pub fn run(
     let source_report = transport.wait_source_attestation()?;
     let custody_manifest = transport.wait_ceremony(transport::CUSTODY_MANIFEST_FILE)?;
     let transfer = handoff::decode_transfer(&transfer_bytes)?;
-    // A three-file source publishes zns_mint.conf before the manifest; a
-    // manifest-only source never publishes it. A planted conf only selects a binding the
+    // A three-file source publishes zns_mint.conf first; a manifest-only
+    // source never does. A planted conf only selects a binding that the
     // source report then fails.
     let expected = if transport.has_ceremony(transport::MINT_CONF_FILE)? {
         let mint_conf = transport.wait_ceremony(transport::MINT_CONF_FILE)?;

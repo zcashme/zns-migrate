@@ -15,18 +15,8 @@
 //! exit only when that report matches the target measurement and policy
 //! ```
 //!
-//! There is no second offer. A failed check of the target returns before the
-//! capsule is unsealed. The source checks its own measurement and guest
-//! policy, then the capsule file hash and header fingerprint, before that
-//! unseal. The custody manifest beside the capsule is read before that unseal.
-//! Its hash is bound into the transfer attestation, and the same bytes are
-//! published in the open with the transfer. The transfer is published only
-//! with an attestation that binds this offer, this ciphertext, and that
-//! manifest, and only when that report's measurement is
-//! `from_measurement` and its guest policy is `from_guest_policy`. The receipt
-//! is accepted only when a target report binds this offer and this receipt,
-//! and that report's measurement is `to_measurement` and its guest policy is
-//! `to_guest_policy`.
+//! There is no second offer: any failed check returns before the seed is
+//! unsealed.
 
 use rand::rngs::SysRng;
 use tracing::info;
