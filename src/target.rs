@@ -104,27 +104,23 @@ pub fn run(
     let capsule = capsule::seal_seed(sealing_key, &seed, &mut rng)?;
     let bytes = capsule::serialize_capsule(&capsule)?;
     let staged = persist::stage(output, &bytes)?;
-    prove_persisted(
-        sealing_key,
-        &seed,
-        &capsule::read_capsule_file(staged.path())?,
-    )?;
+    let staged_bytes = capsule::read_capsule_file(staged.path())?;
+    prove_persisted(sealing_key, &seed, &staged_bytes)?;
+    let seed_fingerprint =
+        SeedFingerprint::from_seed(seed.expose_secret()).ok_or(MigrateError::SeedFingerprint)?;
+    // The report is made and checked against the staged bytes before anything
+    // is committed, so the capsule, manifest, and report land together or not
+    // at all.
+    let attestation = stage_attestation(output, &staged_bytes, &seed_fingerprint)?;
     let mut pending = vec![(staged, output.to_path_buf())];
     pending.push(stage_custody_manifest(output, &custody_manifest)?);
+    pending.push(attestation);
     persist::commit_files(pending, args.replace_after_verified_migration)?;
 
     let persisted = capsule::read_capsule_file(output)?;
     let parsed = prove_persisted(sealing_key, &seed, &persisted)?;
-    let seed_fingerprint =
-        SeedFingerprint::from_seed(seed.expose_secret()).ok_or(MigrateError::SeedFingerprint)?;
     drop(seed);
     info!(path = %output.display(), "capsule reopened");
-    install_attestation(
-        output,
-        &persisted,
-        &seed_fingerprint,
-        args.replace_after_verified_migration,
-    )?;
 
     let receipt = MigrationReceipt {
         manifest_hash,
@@ -174,21 +170,21 @@ fn guard_outputs(output: &Path, replace: bool) -> Result<(), MigrateError> {
 /// so the report has to come from this guest, over the capsule it persisted.
 const ATTESTATION_FILE: &str = "zns_attestation.bin";
 
-fn install_attestation(
+/// Request this guest's report over the capsule bytes it is about to commit,
+/// verify that report against those same bytes, and stage it beside the
+/// capsule. The caller commits it with the capsule and the manifest.
+fn stage_attestation(
     output: &Path,
     capsule_bytes: &[u8],
     fingerprint: &SeedFingerprint,
-    replace: bool,
-) -> Result<(), MigrateError> {
+) -> Result<(persist::StagedCapsule, PathBuf), MigrateError> {
     let dest = persist::containing_dir(output).join(ATTESTATION_FILE);
-    persist::guard_output(&dest, replace)?;
     let report = attestation::request(capsule_bytes, fingerprint);
-    let staged = persist::stage_file(&dest, &report.report_bytes, 0o644)?;
-    persist::commit_files(vec![(staged, dest.clone())], replace)?;
-    let stored = std::fs::read(&dest).map_err(|error| MigrateError::io("read attestation", error))?;
-    attestation::verify(capsule_bytes, fingerprint, stored)?;
-    info!(path = %dest.display(), "attestation persisted and verified");
-    Ok(())
+    attestation::verify(capsule_bytes, fingerprint, report.report_bytes.clone())?;
+    Ok((
+        persist::stage_file(&dest, &report.report_bytes, 0o644)?,
+        dest,
+    ))
 }
 
 /// The custody manifest beside the capsule, public (0644) like keygen writes it.
