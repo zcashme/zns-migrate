@@ -22,10 +22,10 @@ use rand::rngs::SysRng;
 use tracing::info;
 use zns_canon::capsule;
 use zns_canon::migration::{self, MigrationOffer};
-use zns_canon::sealing::{get_attestation, SealingKey};
+use zns_canon::sealing::SealingKey;
 use zns_canon::upgrade::{self, UpgradeManifest};
 
-use crate::attest::{self, require_measurement, require_policy};
+use crate::attest::{self, Side};
 use crate::cli::Args;
 use crate::error::MigrateError;
 use crate::handoff;
@@ -60,22 +60,7 @@ pub fn run(
         "target measurement authorized"
     );
 
-    let source_identity = handoff::source_report_data(&offer);
-    let source_identity_report = get_attestation(&source_identity)?;
-    if source_identity_report.as_bytes().is_empty() {
-        return Err(MigrateError::transport("TEE returned an empty attestation"));
-    }
-    let own = attest::verified_report(source_identity_report.as_bytes(), &source_identity)?;
-    require_measurement(
-        &own.measurement,
-        &manifest.from_measurement,
-        MigrateError::SourceMeasurement,
-    )?;
-    require_policy(
-        own.guest_policy,
-        manifest.from_guest_policy,
-        MigrateError::SourceGuestPolicy,
-    )?;
+    attest::own_report(&handoff::source_report_data(&offer), manifest, Side::Source)?;
 
     let capsule_bytes = capsule::read_capsule_file(input)?;
     let capsule = capsule::parse_capsule(&capsule_bytes)?;
@@ -88,23 +73,9 @@ pub fn run(
         transfer
     };
     let transfer_report = handoff::transfer_report_data(&offer, &transfer, &custody_manifest);
-    let source_report = get_attestation(&transfer_report)?;
-    if source_report.as_bytes().is_empty() {
-        return Err(MigrateError::transport("TEE returned an empty attestation"));
-    }
-    let source = attest::verified_report(source_report.as_bytes(), &transfer_report)?;
-    require_measurement(
-        &source.measurement,
-        &manifest.from_measurement,
-        MigrateError::SourceMeasurement,
-    )?;
-    require_policy(
-        source.guest_policy,
-        manifest.from_guest_policy,
-        MigrateError::SourceGuestPolicy,
-    )?;
+    let source_report = attest::own_report(&transfer_report, manifest, Side::Source)?;
     transport.publish_encrypted_seed(&handoff::encode_transfer(&transfer))?;
-    transport.publish_source_attestation(source_report.as_bytes())?;
+    transport.publish_source_attestation(&source_report)?;
     transport.publish_custody_manifest(&custody_manifest)?;
     info!("seed wrapped; plaintext dropped");
 
@@ -113,17 +84,7 @@ pub fn run(
     handoff::verify_receipt(&receipt, manifest, &capsule_bytes, &capsule.fingerprint)?;
     let receipt_report = wait_peer(transport.wait_receipt_attestation())?;
     let expected = handoff::receipt_report_data(&offer, &receipt);
-    let receipt_report = attest::verified_report(&receipt_report, &expected)?;
-    require_measurement(
-        &receipt_report.measurement,
-        &manifest.to_measurement,
-        MigrateError::Measurement,
-    )?;
-    require_policy(
-        receipt_report.guest_policy,
-        manifest.to_guest_policy,
-        MigrateError::GuestPolicy,
-    )?;
+    attest::require_report(&receipt_report, &expected, manifest, Side::Target)?;
     info!(
         capsule = hex::encode(receipt.new_capsule_hash),
         fingerprint = hex::encode(receipt.seed_fingerprint),
@@ -138,16 +99,7 @@ pub(crate) fn authorize(
     measurement: &[u8; 48],
     guest_policy: u64,
 ) -> Result<(), MigrateError> {
-    require_measurement(
-        measurement,
-        &manifest.to_measurement,
-        MigrateError::Measurement,
-    )?;
-    require_policy(
-        guest_policy,
-        manifest.to_guest_policy,
-        MigrateError::GuestPolicy,
-    )?;
+    attest::require_side(measurement, guest_policy, manifest, Side::Target)?;
     if offer.manifest_hash != upgrade::manifest_hash(manifest) {
         return Err(MigrateError::ManifestHash);
     }

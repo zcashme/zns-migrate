@@ -367,7 +367,7 @@ fn sync_dir(dir: &Path) -> Result<(), MigrateError> {
 
 /// The capsule is trusted state. It must not be one of the channel files.
 pub fn capsule_outside_transport(capsule: &Path, transport_dir: &Path) -> Result<(), MigrateError> {
-    trusted_outside_transport(capsule, transport_dir, "capsule")?;
+    outside_transport(capsule, transport_dir)?;
     let name = capsule.file_name().ok_or_else(|| {
         MigrateError::transport(format!("{} has no file name", capsule.display()))
     })?;
@@ -380,12 +380,8 @@ pub fn capsule_outside_transport(capsule: &Path, transport_dir: &Path) -> Result
     Ok(())
 }
 
-/// A file the operator mounts in. It must not live in the channel directory.
-pub fn trusted_outside_transport(
-    path: &Path,
-    transport_dir: &Path,
-    kind: &str,
-) -> Result<(), MigrateError> {
+/// The capsule path must not resolve into the channel directory.
+fn outside_transport(path: &Path, transport_dir: &Path) -> Result<(), MigrateError> {
     let transport = fs::canonicalize(transport_dir).map_err(|error| {
         MigrateError::io(format!("canonicalize {}", transport_dir.display()), error)
     })?;
@@ -395,7 +391,7 @@ pub fn trusted_outside_transport(
         .unwrap_or_else(|| Path::new("."));
     if !parent.exists() {
         return Err(MigrateError::transport(format!(
-            "{kind} directory {} does not exist",
+            "capsule directory {} does not exist",
             parent.display()
         )));
     }
@@ -407,7 +403,7 @@ pub fn trusted_outside_transport(
     let full = parent.join(name);
     if full.starts_with(&transport) {
         return Err(MigrateError::transport(format!(
-            "{kind} {} is inside the transport directory",
+            "capsule {} is inside the transport directory",
             path.display()
         )));
     }
@@ -515,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_names_apply_to_capsules_only() {
+    fn capsules_stay_outside_the_channel() {
         let root = scratch("names");
         let channel = root.join("channel");
         let state = root.join("state");
@@ -524,10 +520,10 @@ mod tests {
         let named = state.join(ATTESTATION_FILE);
         let err = capsule_outside_transport(&named, &channel).unwrap_err();
         assert!(err.to_string().contains("reserved"), "{err}");
-        trusted_outside_transport(&named, &channel, "attestation bundle").unwrap();
-        let inside = channel.join("upgrade.bin");
-        let err = trusted_outside_transport(&inside, &channel, "upgrade document").unwrap_err();
+        let inside = channel.join("zns_seed.capsule");
+        let err = capsule_outside_transport(&inside, &channel).unwrap_err();
         assert!(err.to_string().contains("inside"), "{err}");
+        capsule_outside_transport(&state.join("zns_seed.capsule"), &channel).unwrap();
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -15,10 +15,9 @@
 use tracing::info;
 use zns_canon::capsule;
 use zns_canon::migration::MigrationOffer;
-use zns_canon::sealing::get_attestation;
 use zns_canon::upgrade::{self, UpgradeManifest};
 
-use crate::attest::{self, require_measurement, require_policy};
+use crate::attest::{self, Side};
 use crate::cli::Args;
 use crate::error::MigrateError;
 use crate::handoff::{self, HandoffError, MigrationReceipt, OFFER_LEN, RECEIPT_LEN};
@@ -26,23 +25,12 @@ use crate::transport::{self, DirTransport, OFFER_FILE, RECEIPT_FILE};
 
 pub fn source(manifest: &UpgradeManifest, channel: &DirTransport) -> Result<(), MigrateError> {
     let (offer, receipt) = finished_handoff(manifest, channel)?;
-    let report_data = handoff::stopped_report_data(&offer, &receipt);
-    let report = get_attestation(&report_data)?;
-    if report.as_bytes().is_empty() {
-        return Err(MigrateError::transport("TEE returned an empty attestation"));
-    }
-    let own = attest::verified_report(report.as_bytes(), &report_data)?;
-    require_measurement(
-        &own.measurement,
-        &manifest.from_measurement,
-        MigrateError::SourceMeasurement,
+    let report = attest::own_report(
+        &handoff::stopped_report_data(&offer, &receipt),
+        manifest,
+        Side::Source,
     )?;
-    require_policy(
-        own.guest_policy,
-        manifest.from_guest_policy,
-        MigrateError::SourceGuestPolicy,
-    )?;
-    channel.publish_source_stopped(report.as_bytes())?;
+    channel.publish_source_stopped(&report)?;
     info!("source stopped published");
     Ok(())
 }
@@ -62,17 +50,11 @@ pub fn target(
         return Err(HandoffError::ReceiptNotThisCapsule.into());
     }
     let stopped = channel.wait_source_stopped()?;
-    let report_data = handoff::stopped_report_data(&offer, &receipt);
-    let source = attest::verified_report(&stopped, &report_data)?;
-    require_measurement(
-        &source.measurement,
-        &manifest.from_measurement,
-        MigrateError::SourceMeasurement,
-    )?;
-    require_policy(
-        source.guest_policy,
-        manifest.from_guest_policy,
-        MigrateError::SourceGuestPolicy,
+    attest::require_report(
+        &stopped,
+        &handoff::stopped_report_data(&offer, &receipt),
+        manifest,
+        Side::Source,
     )?;
     info!("source mint stopped");
     Ok(())

@@ -76,6 +76,10 @@ const MAX_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 pub enum Role {
     Source,
     Target,
+    /// `cutover source`: after the handoff, attest this mint has stopped.
+    CutoverSource,
+    /// `cutover target`: after the handoff, check the source's stop.
+    CutoverTarget,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,7 +93,6 @@ pub struct Args {
     pub output_capsule: Option<PathBuf>,
     pub replace_after_verified_migration: bool,
     pub timeout: Duration,
-    pub cutover: bool,
 }
 
 #[derive(Debug)]
@@ -110,12 +113,14 @@ where
     if cutover {
         first = args.next();
     }
-    let role = match first.as_deref() {
-        None => return Err(MigrateError::usage("missing role: source or target")),
-        Some("-h" | "--help") => return Ok(Command::Help),
-        Some("source") => Role::Source,
-        Some("target") => Role::Target,
-        Some(other) => {
+    let role = match (cutover, first.as_deref()) {
+        (_, None) => return Err(MigrateError::usage("missing role: source or target")),
+        (_, Some("-h" | "--help")) => return Ok(Command::Help),
+        (false, Some("source")) => Role::Source,
+        (false, Some("target")) => Role::Target,
+        (true, Some("source")) => Role::CutoverSource,
+        (true, Some("target")) => Role::CutoverTarget,
+        (_, Some(other)) => {
             return Err(MigrateError::usage(format!(
                 "unknown role {other}; expected source or target"
             )));
@@ -195,18 +200,6 @@ where
         transport_dir.ok_or_else(|| MigrateError::usage("--transport-dir is required"))?;
 
     match role {
-        _ if cutover => {
-            if input_capsule.is_some() || replace {
-                return Err(MigrateError::usage(
-                    "cutover takes only --output-capsule, on target",
-                ));
-            }
-            if (role == Role::Target) != output_capsule.is_some() {
-                return Err(MigrateError::usage(
-                    "cutover target needs --output-capsule; cutover source takes none",
-                ));
-            }
-        }
         Role::Source => {
             if output_capsule.is_some() {
                 return Err(MigrateError::usage("source does not take --output-capsule"));
@@ -228,6 +221,21 @@ where
                 return Err(MigrateError::usage("--output-capsule is required"));
             }
         }
+        Role::CutoverSource => {
+            if input_capsule.is_some() || output_capsule.is_some() || replace {
+                return Err(MigrateError::usage("cutover source takes no capsule"));
+            }
+        }
+        Role::CutoverTarget => {
+            if input_capsule.is_some() || replace {
+                return Err(MigrateError::usage(
+                    "cutover target takes only --output-capsule",
+                ));
+            }
+            if output_capsule.is_none() {
+                return Err(MigrateError::usage("--output-capsule is required"));
+            }
+        }
     }
 
     Ok(Command::Run(Args {
@@ -240,7 +248,6 @@ where
         output_capsule: output_capsule.map(PathBuf::from),
         replace_after_verified_migration: replace,
         timeout,
-        cutover,
     }))
 }
 
@@ -355,16 +362,17 @@ mod tests {
             "/migration",
         ];
         let err = parse(base).unwrap_err();
-        assert!(err.to_string().contains("needs --output-capsule"));
+        assert!(err.to_string().contains("--output-capsule is required"));
         let Command::Run(args) = parse(base.iter().chain(&["--output-capsule", "c"])).unwrap()
         else {
             panic!("cutover target");
         };
         assert_eq!(args.output_capsule, Some(PathBuf::from("c")));
+        assert_eq!(args.role, Role::CutoverTarget);
         let mut source = base;
         source[2] = "source";
         parse(source).unwrap();
         let err = parse(source.iter().chain(&["--output-capsule", "c"])).unwrap_err();
-        assert!(err.to_string().contains("cutover source takes none"));
+        assert!(err.to_string().contains("cutover source takes no capsule"));
     }
 }

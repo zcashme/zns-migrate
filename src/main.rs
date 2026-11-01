@@ -54,20 +54,17 @@ pub(crate) fn execute(args: cli::Args) -> Result<(), MigrateError> {
     let loaded = manifest::load(&args.manifest)?;
     let channel = transport::DirTransport::open(&args.transport_dir, args.timeout)?;
     manifest::authorize(&loaded, &args.upgrade_document, &args.attestation_bundle)?;
-    // Cutover handles no seed, so it derives no sealing key.
-    if args.cutover {
-        return match args.role {
-            cli::Role::Source => cutover::source(&loaded, &channel),
-            cli::Role::Target => cutover::target(&args, &loaded, &channel),
-        };
-    }
     // Migration attests every step, so it runs only on the enclave: derive
-    // the hardware sealing key once and pass it through.
-    let sealing_key =
+    // the hardware sealing key once and pass it through. Cutover handles no
+    // seed, so it derives none.
+    let sealing_key = || {
         zns_canon::sealing::derive_sealing_key(zns_canon::capsule::CAPSULE_KEY_CONTEXT)
-            .map_err(MigrateError::Tee)?;
+            .map_err(MigrateError::Tee)
+    };
     match args.role {
-        cli::Role::Source => source::run(&sealing_key, &args, &loaded, &channel),
-        cli::Role::Target => target::run(&sealing_key, &args, &loaded, &channel),
+        cli::Role::Source => source::run(&sealing_key()?, &args, &loaded, &channel),
+        cli::Role::Target => target::run(&sealing_key()?, &args, &loaded, &channel),
+        cli::Role::CutoverSource => cutover::source(&loaded, &channel),
+        cli::Role::CutoverTarget => cutover::target(&args, &loaded, &channel),
     }
 }
