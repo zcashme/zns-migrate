@@ -60,6 +60,20 @@ Target leaves an existing capsule in place unless `--replace-after-verified-migr
 
 The attested manifest includes `sequence`. This binary does not compare it with a stored custody generation, so an older attested manifest for the same source measurement is still accepted.
 
+## Cutover
+
+After a handoff to another release, the source mint can serve while the target syncs. `cutover` hands over the mint on the same channel, so only one guest serves at a time.
+
+```bash
+# Target: --after appears when Zebra is ready
+zns-migrate cutover target ... --hold /state/migrate-source.hold --after /run/zebra-ready
+
+# Source: --after appears when mint has stopped
+zns-migrate cutover source ... --hold /state/migrate-source.hold --after /run/mint-stopped
+```
+
+Target publishes `target_ready_attestation.bin`, a `to_measurement` report over the offer and the receipt. Source checks it, writes `--hold`, waits for `--after`, then publishes `source_stopped_attestation.bin`, a `from_measurement` report over the same bytes. Target checks that and removes `--hold`. The host can delay either step but cannot fake one. Both sides can rerun after a reboot.
+
 ## Build
 
 `zns-canon` supplies sealing, capsule parsing, the manifest hash, migration `report_data`, the offer-bound X25519 seed wrap, stored SNP report verification, and `authorize_manifest`. Sealing and attestation use the SNP guest device. There is no off-enclave build.

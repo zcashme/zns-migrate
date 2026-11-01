@@ -256,7 +256,7 @@ pub fn containing_dir(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-fn sync_parent(path: &Path) -> Result<(), MigrateError> {
+pub(crate) fn sync_parent(path: &Path) -> Result<(), MigrateError> {
     let parent = containing_dir(path);
     File::open(parent)
         .and_then(|file| file.sync_all())

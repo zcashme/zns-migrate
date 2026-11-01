@@ -31,6 +31,12 @@ pub const TRANSFER_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_TRANSFER_V1";
 /// be presented as a receipt.
 pub const RECEIPT_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_RECEIPT_V1";
 
+/// Domain separation for [`ready_report_data`]. Target, after the handoff.
+pub const READY_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_TARGET_READY_V1";
+
+/// Domain separation for [`stopped_report_data`]. Source, after the handoff.
+pub const STOPPED_REPORT_DOMAIN: &[u8] = b"ZNS_MIGRATION_SOURCE_STOPPED_V1";
+
 /// `ephemeral_pubkey || nonce || manifest_hash`.
 pub const OFFER_LEN: usize = 32 + 32 + 32;
 
@@ -123,6 +129,38 @@ pub fn receipt_report_data(
     input.extend_from_slice(RECEIPT_REPORT_DOMAIN);
     input.extend_from_slice(&offer_bytes);
     input.extend_from_slice(&receipt_bytes);
+    blake2b_512(&input)
+}
+
+/// `BLAKE2b-512(b"ZNS_MIGRATION_TARGET_READY_V1" || offer || receipt)`.
+///
+/// The target is synced and asks the source to stop its mint.
+pub fn ready_report_data(
+    offer: &MigrationOffer,
+    receipt: &MigrationReceipt,
+) -> [u8; REPORT_DATA_LEN] {
+    handoff_report_data(READY_REPORT_DOMAIN, offer, receipt)
+}
+
+/// `BLAKE2b-512(b"ZNS_MIGRATION_SOURCE_STOPPED_V1" || offer || receipt)`.
+///
+/// The source mint is stopped and stays stopped.
+pub fn stopped_report_data(
+    offer: &MigrationOffer,
+    receipt: &MigrationReceipt,
+) -> [u8; REPORT_DATA_LEN] {
+    handoff_report_data(STOPPED_REPORT_DOMAIN, offer, receipt)
+}
+
+fn handoff_report_data(
+    domain: &[u8],
+    offer: &MigrationOffer,
+    receipt: &MigrationReceipt,
+) -> [u8; REPORT_DATA_LEN] {
+    let mut input = Vec::with_capacity(domain.len() + OFFER_LEN + RECEIPT_LEN);
+    input.extend_from_slice(domain);
+    input.extend_from_slice(&encode_offer(offer));
+    input.extend_from_slice(&encode_receipt(receipt));
     blake2b_512(&input)
 }
 
@@ -535,5 +573,23 @@ mod tests {
             ensure_same_seed(&left, &right),
             Err(HandoffError::SeedMismatch)
         );
+    }
+
+    #[test]
+    fn cutover_reports_are_distinct_from_each_other_and_the_receipt() {
+        let (offer, _) = offer_and_transfer();
+        let receipt = MigrationReceipt {
+            manifest_hash: [3u8; 32],
+            new_capsule_hash: [6u8; 32],
+            seed_fingerprint: [7u8; 32],
+        };
+        let ready = ready_report_data(&offer, &receipt);
+        let stopped = stopped_report_data(&offer, &receipt);
+        assert_ne!(ready, stopped);
+        assert_ne!(ready, receipt_report_data(&offer, &receipt));
+        assert_ne!(stopped, receipt_report_data(&offer, &receipt));
+        let mut other = offer;
+        other.nonce[0] ^= 1;
+        assert_ne!(ready, ready_report_data(&other, &receipt));
     }
 }

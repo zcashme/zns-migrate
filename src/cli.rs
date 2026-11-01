@@ -13,6 +13,9 @@ USAGE:
     zns-migrate target --manifest <TOML> --upgrade-document <BYTES> \\
                        --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
                        --output-capsule <PATH> [--replace-after-verified-migration]
+    zns-migrate cutover source|target --manifest <TOML> --upgrade-document <BYTES> \\
+                       --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
+                       --hold <PATH> --after <PATH>
 
 Source and target may start in either order. Target waits until source marks
 the transport directory, then publishes an attested offer before source
@@ -53,6 +56,19 @@ before it installs a capsule.
 Source accepts the receipt only when receipt_attestation.bin binds that offer
 and that receipt, and the report measurement equals to_measurement and its
 guest policy equals to_guest_policy.
+
+cutover runs after a finished handoff to another release, on the same
+channel. The source mint serves while the target syncs.
+
+    target_ready_attestation.bin
+    source_stopped_attestation.bin
+
+cutover target waits for --after, then publishes a report over the offer and
+the receipt. It waits for the source's report, then removes --hold.
+cutover source waits for the target's report, checks it against
+to_measurement and to_guest_policy, and writes --hold. It waits for --after,
+then publishes its report. Target checks that against from_measurement and
+from_guest_policy. A rerun does not publish a report twice.
 ";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -75,12 +91,15 @@ pub struct Args {
     pub output_capsule: Option<PathBuf>,
     pub replace_after_verified_migration: bool,
     pub timeout: Duration,
+    pub cutover: bool,
+    pub hold: Option<PathBuf>,
+    pub after: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 pub enum Command {
     Help,
-    Run(Args),
+    Run(Box<Args>),
 }
 
 pub fn parse<I, S>(args: I) -> Result<Command, MigrateError>
@@ -90,7 +109,12 @@ where
 {
     let mut args = args.into_iter().map(|arg| arg.as_ref().to_string());
     let _program = args.next();
-    let role = match args.next().as_deref() {
+    let mut first = args.next();
+    let cutover = first.as_deref() == Some("cutover");
+    if cutover {
+        first = args.next();
+    }
+    let role = match first.as_deref() {
         None => return Err(MigrateError::usage("missing role: source or target")),
         Some("-h" | "--help") => return Ok(Command::Help),
         Some("source") => Role::Source,
@@ -110,6 +134,8 @@ where
     let mut output_capsule = None;
     let mut replace = false;
     let mut timeout = DEFAULT_TIMEOUT;
+    let mut hold = None;
+    let mut after = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -144,6 +170,8 @@ where
                 "--output-capsule",
                 value("--output-capsule", &mut args)?,
             )?,
+            "--hold" => set_once(&mut hold, "--hold", value("--hold", &mut args)?)?,
+            "--after" => set_once(&mut after, "--after", value("--after", &mut args)?)?,
             "--replace-after-verified-migration" => {
                 if replace {
                     return Err(MigrateError::usage(
@@ -178,7 +206,22 @@ where
     let transport_dir =
         transport_dir.ok_or_else(|| MigrateError::usage("--transport-dir is required"))?;
 
+    if cutover {
+        if input_capsule.is_some() || output_capsule.is_some() || replace {
+            return Err(MigrateError::usage("cutover does not take a capsule"));
+        }
+        if hold.is_none() {
+            return Err(MigrateError::usage("--hold is required"));
+        }
+        if after.is_none() {
+            return Err(MigrateError::usage("--after is required"));
+        }
+    } else if hold.is_some() || after.is_some() {
+        return Err(MigrateError::usage("--hold and --after are for cutover"));
+    }
+
     match role {
+        _ if cutover => {}
         Role::Source => {
             if output_capsule.is_some() {
                 return Err(MigrateError::usage("source does not take --output-capsule"));
@@ -202,7 +245,7 @@ where
         }
     }
 
-    Ok(Command::Run(Args {
+    Ok(Command::Run(Box::new(Args {
         role,
         manifest: PathBuf::from(manifest),
         upgrade_document: PathBuf::from(upgrade_document),
@@ -212,7 +255,10 @@ where
         output_capsule: output_capsule.map(PathBuf::from),
         replace_after_verified_migration: replace,
         timeout,
-    }))
+        cutover,
+        hold: hold.map(PathBuf::from),
+        after: after.map(PathBuf::from),
+    })))
 }
 
 fn set_once(slot: &mut Option<String>, flag: &str, value: String) -> Result<(), MigrateError> {
@@ -337,5 +383,73 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.to_string().contains("does not take"));
+    }
+
+    #[test]
+    fn parses_cutover() {
+        let Command::Run(args) = parse([
+            "zns-migrate",
+            "cutover",
+            "target",
+            "--manifest",
+            "upgrade.toml",
+            "--upgrade-document",
+            "upgrade.bin",
+            "--attestation-bundle",
+            "bundle.jsonl",
+            "--transport-dir",
+            "/migration",
+            "--hold",
+            "/state/migrate-source.hold",
+            "--after",
+            "/run/zebra-ready",
+        ])
+        .unwrap() else {
+            panic!("cutover command");
+        };
+        assert!(args.cutover);
+        assert_eq!(args.role, Role::Target);
+        assert_eq!(args.after, Some(PathBuf::from("/run/zebra-ready")));
+
+        let base = [
+            "zns-migrate",
+            "cutover",
+            "source",
+            "--manifest",
+            "m",
+            "--upgrade-document",
+            "d",
+            "--attestation-bundle",
+            "b",
+            "--transport-dir",
+            "t",
+        ];
+        let err = parse(base.iter().chain(&["--hold", "h"])).unwrap_err();
+        assert!(err.to_string().contains("--after is required"));
+        let err =
+            parse(
+                base.iter()
+                    .chain(&["--hold", "h", "--after", "a", "--input-capsule", "c"]),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("does not take a capsule"));
+        let err = parse([
+            "zns-migrate",
+            "source",
+            "--manifest",
+            "m",
+            "--upgrade-document",
+            "d",
+            "--attestation-bundle",
+            "b",
+            "--transport-dir",
+            "t",
+            "--input-capsule",
+            "c",
+            "--hold",
+            "h",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("for cutover"));
     }
 }

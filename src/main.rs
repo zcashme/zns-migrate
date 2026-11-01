@@ -7,6 +7,7 @@
 
 mod attest;
 mod cli;
+mod cutover;
 mod error;
 mod handoff;
 mod manifest;
@@ -44,7 +45,7 @@ where
         }
         Command::Run(args) => {
             let _ = tracing_subscriber::fmt().with_target(false).try_init();
-            execute(args)
+            execute(*args)
         }
     }
 }
@@ -60,6 +61,13 @@ pub(crate) fn execute(args: cli::Args) -> Result<(), MigrateError> {
         transport::trusted_outside_transport(path, channel.dir(), kind)?;
     }
     manifest::authorize(&loaded, &args.upgrade_document, &args.attestation_bundle)?;
+    // Cutover handles no seed, so it derives no sealing key.
+    if args.cutover {
+        return match args.role {
+            cli::Role::Source => cutover::source(&args, &loaded, &channel),
+            cli::Role::Target => cutover::target(&args, &loaded, &channel),
+        };
+    }
     // Migration attests every step, so it runs only on the enclave: derive
     // the hardware sealing key once and pass it through.
     let sealing_key =

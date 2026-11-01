@@ -25,6 +25,8 @@ pub const SOURCE_ATTESTATION_FILE: &str = "source_attestation.bin";
 pub const RECEIPT_FILE: &str = "receipt.bin";
 pub const RECEIPT_ATTESTATION_FILE: &str = "receipt_attestation.bin";
 pub const SOURCE_READY_FILE: &str = "source.ready";
+pub const TARGET_READY_FILE: &str = "target_ready_attestation.bin";
+pub const SOURCE_STOPPED_FILE: &str = "source_stopped_attestation.bin";
 pub const MINT_CONF_FILE: &str = "zns_mint.conf";
 pub const CUSTODY_MANIFEST_FILE: &str = "zns_custody_manifest.toml";
 pub const CEREMONY_STATE_FILE: &str = "ceremony_state.toml";
@@ -43,6 +45,8 @@ const PROTOCOL_FILES: &[&str] = &[
     CEREMONY_STATE_FILE,
     RECEIPT_FILE,
     RECEIPT_ATTESTATION_FILE,
+    TARGET_READY_FILE,
+    SOURCE_STOPPED_FILE,
 ];
 
 pub struct DirTransport {
@@ -176,6 +180,33 @@ impl DirTransport {
 
     pub fn wait_receipt_attestation(&self) -> Result<Vec<u8>, MigrateError> {
         self.wait_file(RECEIPT_ATTESTATION_FILE, None, ATTESTATION_MAX)
+    }
+
+    pub fn publish_target_ready(&self, bytes: &[u8]) -> Result<(), MigrateError> {
+        bounded_attestation(bytes)?;
+        self.write_new(TARGET_READY_FILE, bytes)
+    }
+
+    pub fn wait_target_ready(&self) -> Result<Vec<u8>, MigrateError> {
+        self.wait_file(TARGET_READY_FILE, None, ATTESTATION_MAX)
+    }
+
+    pub fn publish_source_stopped(&self, bytes: &[u8]) -> Result<(), MigrateError> {
+        bounded_attestation(bytes)?;
+        self.write_new(SOURCE_STOPPED_FILE, bytes)
+    }
+
+    pub fn wait_source_stopped(&self) -> Result<Vec<u8>, MigrateError> {
+        self.wait_file(SOURCE_STOPPED_FILE, None, ATTESTATION_MAX)
+    }
+
+    /// True when `name` is in the channel. A rerun does not publish twice.
+    pub fn contains(&self, name: &str) -> Result<bool, MigrateError> {
+        match fs::symlink_metadata(self.dir.join(name)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(MigrateError::io(format!("inspect {name}"), error)),
+        }
     }
 
     fn refuse_existing(&self, names: &[&str]) -> Result<(), MigrateError> {
