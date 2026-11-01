@@ -11,8 +11,10 @@ use std::path::{Path, PathBuf};
 
 use rand::rngs::SysRng;
 use rand::TryRng;
-use secrecy::Secret;
+use secrecy::{ExposeSecret, Secret};
 use tracing::info;
+use zip32::fingerprint::SeedFingerprint;
+use zns_canon::attestation;
 use zns_canon::capsule::{self, SEED_LEN};
 use zns_canon::migration::{self, MigrationOffer};
 use zns_canon::sealing::{get_attestation, SealingKey};
@@ -112,8 +114,16 @@ pub fn run(
 
     let persisted = capsule::read_capsule_file(output)?;
     let parsed = prove_persisted(sealing_key, &seed, &persisted)?;
+    let seed_fingerprint =
+        SeedFingerprint::from_seed(seed.expose_secret()).ok_or(MigrateError::SeedFingerprint)?;
     drop(seed);
     info!(path = %output.display(), "capsule reopened");
+    install_attestation(
+        output,
+        &persisted,
+        &seed_fingerprint,
+        args.replace_after_verified_migration,
+    )?;
 
     let receipt = MigrationReceipt {
         manifest_hash,
@@ -153,6 +163,28 @@ fn guard_outputs(output: &Path, replace: bool) -> Result<(), MigrateError> {
 }
 
 /// The custody manifest beside the capsule, public (0644) like keygen writes it.
+/// The mint refuses to boot without `keys/zns_attestation.bin`, a report that
+/// covers the capsule file on disk. A migration target seals its own capsule,
+/// so the report has to come from this guest, over the capsule it persisted.
+const ATTESTATION_FILE: &str = "zns_attestation.bin";
+
+fn install_attestation(
+    output: &Path,
+    capsule_bytes: &[u8],
+    fingerprint: &SeedFingerprint,
+    replace: bool,
+) -> Result<(), MigrateError> {
+    let dest = persist::containing_dir(output).join(ATTESTATION_FILE);
+    persist::guard_output(&dest, replace)?;
+    let report = attestation::request(capsule_bytes, fingerprint);
+    let staged = persist::stage_file(&dest, &report.report_bytes, 0o644)?;
+    persist::commit_files(vec![(staged, dest.clone())], replace)?;
+    let stored = std::fs::read(&dest).map_err(|error| MigrateError::io("read attestation", error))?;
+    attestation::verify(capsule_bytes, fingerprint, stored)?;
+    info!(path = %dest.display(), "attestation persisted and verified");
+    Ok(())
+}
+
 fn stage_custody_manifest(
     capsule: &Path,
     bytes: &[u8],
