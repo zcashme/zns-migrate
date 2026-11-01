@@ -10,6 +10,9 @@
 //! target: check that report, remove --hold
 //! ```
 //!
+//! Source clears --after before it writes --hold, so a leftover file cannot
+//! stand for a mint that is still running.
+//!
 //! Both guests can rerun this after a reboot. It reads only the public offer
 //! and receipt from the channel, and never publishes a report twice.
 
@@ -92,21 +95,24 @@ pub fn source(
         manifest.to_guest_policy,
         MigrateError::GuestPolicy,
     )?;
+    if channel.contains(SOURCE_STOPPED_FILE)? {
+        return write_hold(hold);
+    }
+    // A leftover --after can predate the hold. Clear it first, so the one
+    // we wait for was written by a pass that saw the hold.
+    remove_local(after)?;
     write_hold(hold)?;
     info!("target is ready; hold written");
-
-    if !channel.contains(SOURCE_STOPPED_FILE)? {
-        wait_local(after, args.timeout)?;
-        let report = own_report(
-            &handoff::stopped_report_data(&offer, &receipt),
-            &manifest.from_measurement,
-            manifest.from_guest_policy,
-            MigrateError::SourceMeasurement,
-            MigrateError::SourceGuestPolicy,
-        )?;
-        channel.publish_source_stopped(&report)?;
-        info!("source stopped published");
-    }
+    wait_local(after, args.timeout)?;
+    let report = own_report(
+        &handoff::stopped_report_data(&offer, &receipt),
+        &manifest.from_measurement,
+        manifest.from_guest_policy,
+        MigrateError::SourceMeasurement,
+        MigrateError::SourceGuestPolicy,
+    )?;
+    channel.publish_source_stopped(&report)?;
+    info!("source stopped published");
     Ok(())
 }
 
@@ -198,6 +204,10 @@ fn write_hold(path: &Path) -> Result<(), MigrateError> {
 }
 
 fn remove_hold(path: &Path) -> Result<(), MigrateError> {
+    remove_local(path)
+}
+
+fn remove_local(path: &Path) -> Result<(), MigrateError> {
     match fs::remove_file(path) {
         Ok(()) => persist::sync_parent(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

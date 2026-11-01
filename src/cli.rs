@@ -66,8 +66,8 @@ channel. The source mint serves while the target syncs.
 cutover target waits for --after, then publishes a report over the offer and
 the receipt. It waits for the source's report, then removes --hold.
 cutover source waits for the target's report, checks it against
-to_measurement and to_guest_policy, and writes --hold. It waits for --after,
-then publishes its report. Target checks that against from_measurement and
+to_measurement and to_guest_policy, removes --after, and writes --hold. It
+waits for --after to appear again, then publishes its report. Target checks that against from_measurement and
 from_guest_policy. A rerun does not publish a report twice.
 ";
 

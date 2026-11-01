@@ -72,7 +72,7 @@ zns-migrate cutover target ... --hold /state/migrate-source.hold --after /run/ze
 zns-migrate cutover source ... --hold /state/migrate-source.hold --after /run/mint-stopped
 ```
 
-Target publishes `target_ready_attestation.bin`, a `to_measurement` report over the offer and the receipt. Source checks it, writes `--hold`, waits for `--after`, then publishes `source_stopped_attestation.bin`, a `from_measurement` report over the same bytes. Target checks that and removes `--hold`. The host can delay either step but cannot fake one. Both sides can rerun after a reboot.
+Target publishes `target_ready_attestation.bin`, a `to_measurement` report over the offer and the receipt. Source checks it, removes `--after`, writes `--hold`, waits for `--after` to appear again, then publishes `source_stopped_attestation.bin`, a `from_measurement` report over the same bytes. Target checks that and removes `--hold`. The host can delay either step but cannot fake one. Both sides can rerun after a reboot.
 
 ## Build
 
