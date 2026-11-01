@@ -13,8 +13,11 @@ USAGE:
     zns-migrate target --manifest <TOML> --upgrade-document <BYTES> \\
                        --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
                        --output-capsule <PATH> [--replace-after-verified-migration]
-    zns-migrate cutover source|target --manifest <TOML> --upgrade-document <BYTES> \\
+    zns-migrate cutover source --manifest <TOML> --upgrade-document <BYTES> \\
                        --attestation-bundle <BUNDLE> --transport-dir <DIR>
+    zns-migrate cutover target --manifest <TOML> --upgrade-document <BYTES> \\
+                       --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
+                       --output-capsule <PATH>
 
 Source and target may start in either order. Target waits until source marks
 the transport directory, then publishes an attested offer before source
@@ -59,10 +62,11 @@ channel. It adds one file:
     source_stopped_attestation.bin
 
 cutover source publishes a report over the offer and the receipt. Run it
-only once this guest's mint has stopped for good. cutover target waits for
-that report and requires its measurement to equal from_measurement and its
-guest policy to equal from_guest_policy. Start the target mint only after it
-succeeds. A rerun does not publish the report twice.
+only once this guest's mint has stopped for good. cutover target requires the
+receipt to name its own capsule. It waits for that report and requires its
+measurement to equal from_measurement and its guest policy to equal
+from_guest_policy. Start the target mint only after it succeeds. Both read
+the offer and receipt once; the handoff must have finished.
 ";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -192,8 +196,15 @@ where
 
     match role {
         _ if cutover => {
-            if input_capsule.is_some() || output_capsule.is_some() || replace {
-                return Err(MigrateError::usage("cutover does not take a capsule"));
+            if input_capsule.is_some() || replace {
+                return Err(MigrateError::usage(
+                    "cutover takes only --output-capsule, on target",
+                ));
+            }
+            if (role == Role::Target) != output_capsule.is_some() {
+                return Err(MigrateError::usage(
+                    "cutover target needs --output-capsule; cutover source takes none",
+                ));
             }
         }
         Role::Source => {
@@ -343,12 +354,17 @@ mod tests {
             "--transport-dir",
             "/migration",
         ];
-        let Command::Run(args) = parse(base).unwrap() else {
-            panic!("cutover command");
+        let err = parse(base).unwrap_err();
+        assert!(err.to_string().contains("needs --output-capsule"));
+        let Command::Run(args) = parse(base.iter().chain(&["--output-capsule", "c"])).unwrap()
+        else {
+            panic!("cutover target");
         };
-        assert!(args.cutover);
-        assert_eq!(args.role, Role::Target);
-        let err = parse(base.iter().chain(&["--output-capsule", "c"])).unwrap_err();
-        assert!(err.to_string().contains("does not take a capsule"));
+        assert_eq!(args.output_capsule, Some(PathBuf::from("c")));
+        let mut source = base;
+        source[2] = "source";
+        parse(source).unwrap();
+        let err = parse(source.iter().chain(&["--output-capsule", "c"])).unwrap_err();
+        assert!(err.to_string().contains("cutover source takes none"));
     }
 }

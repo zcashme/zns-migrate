@@ -182,15 +182,6 @@ impl DirTransport {
         self.wait_file(SOURCE_STOPPED_FILE, None, ATTESTATION_MAX)
     }
 
-    /// True when `name` is in the channel. A rerun does not publish twice.
-    pub fn contains(&self, name: &str) -> Result<bool, MigrateError> {
-        match fs::symlink_metadata(self.dir.join(name)) {
-            Ok(_) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(MigrateError::io(format!("inspect {name}"), error)),
-        }
-    }
-
     fn refuse_existing(&self, names: &[&str]) -> Result<(), MigrateError> {
         for name in names {
             match fs::symlink_metadata(self.dir.join(name)) {

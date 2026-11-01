@@ -58,7 +58,7 @@ pub(crate) fn execute(args: cli::Args) -> Result<(), MigrateError> {
     if args.cutover {
         return match args.role {
             cli::Role::Source => cutover::source(&loaded, &channel),
-            cli::Role::Target => cutover::target(&loaded, &channel),
+            cli::Role::Target => cutover::target(&args, &loaded, &channel),
         };
     }
     // Migration attests every step, so it runs only on the enclave: derive

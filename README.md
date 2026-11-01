@@ -69,10 +69,11 @@ After a handoff to another release, the source mint keeps serving while the targ
 zns-migrate cutover source --manifest ... --upgrade-document ... --attestation-bundle ... --transport-dir /migration
 
 # Next guest: start mint only after this succeeds
-zns-migrate cutover target --manifest ... --upgrade-document ... --attestation-bundle ... --transport-dir /migration
+zns-migrate cutover target --manifest ... --upgrade-document ... --attestation-bundle ... --transport-dir /migration \
+  --output-capsule /state/keys/zns_seed.capsule
 ```
 
-Source publishes `source_stopped_attestation.bin`, a `from_measurement` report over the offer and the receipt. Target checks it. Only this step is attested: a forged one could let two mints serve. When to stop the source mint, and the hold that keeps the target mint off, belong to the caller.
+Source publishes `source_stopped_attestation.bin`, a `from_measurement` report over the offer and the receipt. Target checks it, and requires the receipt to name its own capsule, so a report from an earlier handoff does not pass. Only this step is attested: a forged one could let two mints serve. When to stop the source mint, and the hold that keeps the target mint off, belong to the caller.
 
 ## Build
 

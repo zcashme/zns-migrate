@@ -75,6 +75,9 @@ pub enum HandoffError {
 
     #[error("migration receipt capsule hash is empty")]
     ReceiptEmpty,
+
+    #[error("migration receipt does not name this target's capsule")]
+    ReceiptNotThisCapsule,
 }
 
 /// `BLAKE2b-512(b"ZNS_MIGRATION_SOURCE_V1" || offer)`.
