@@ -25,11 +25,8 @@ pub const SOURCE_ATTESTATION_FILE: &str = "source_attestation.bin";
 pub const RECEIPT_FILE: &str = "receipt.bin";
 pub const RECEIPT_ATTESTATION_FILE: &str = "receipt_attestation.bin";
 pub const SOURCE_READY_FILE: &str = "source.ready";
-pub const TARGET_READY_FILE: &str = "target_ready_attestation.bin";
 pub const SOURCE_STOPPED_FILE: &str = "source_stopped_attestation.bin";
-pub const MINT_CONF_FILE: &str = "zns_mint.conf";
 pub const CUSTODY_MANIFEST_FILE: &str = "zns_custody_manifest.toml";
-pub const CEREMONY_STATE_FILE: &str = "ceremony_state.toml";
 const READY_MAGIC: &[u8] = b"ZNS_MIGRATE_READY_V1";
 const ATTESTATION_MAX: usize = 4096;
 pub const CEREMONY_MAX: usize = 1024 * 1024;
@@ -40,12 +37,9 @@ const PROTOCOL_FILES: &[&str] = &[
     ATTESTATION_FILE,
     ENCRYPTED_SEED_FILE,
     SOURCE_ATTESTATION_FILE,
-    MINT_CONF_FILE,
     CUSTODY_MANIFEST_FILE,
-    CEREMONY_STATE_FILE,
     RECEIPT_FILE,
     RECEIPT_ATTESTATION_FILE,
-    TARGET_READY_FILE,
     SOURCE_STOPPED_FILE,
 ];
 
@@ -146,22 +140,19 @@ impl DirTransport {
         self.wait_file(ENCRYPTED_SEED_FILE, Some(TRANSFER_LEN), TRANSFER_LEN)
     }
 
-    /// Copy the custody manifest in the open. The name must be
-    /// [`CUSTODY_MANIFEST_FILE`]; it is the only ceremony file on the channel.
-    pub fn publish_ceremony(&self, name: &str, bytes: &[u8]) -> Result<(), MigrateError> {
-        ceremony_name(name)?;
+    /// The custody manifest, in the open. It is the only ceremony file.
+    pub fn publish_custody_manifest(&self, bytes: &[u8]) -> Result<(), MigrateError> {
         if bytes.is_empty() || bytes.len() > CEREMONY_MAX {
             return Err(MigrateError::transport(format!(
-                "{name} is {} bytes",
+                "{CUSTODY_MANIFEST_FILE} is {} bytes",
                 bytes.len()
             )));
         }
-        self.write_new(name, bytes)
+        self.write_new(CUSTODY_MANIFEST_FILE, bytes)
     }
 
-    pub fn wait_ceremony(&self, name: &str) -> Result<Vec<u8>, MigrateError> {
-        ceremony_name(name)?;
-        self.wait_file(name, None, CEREMONY_MAX)
+    pub fn wait_custody_manifest(&self) -> Result<Vec<u8>, MigrateError> {
+        self.wait_file(CUSTODY_MANIFEST_FILE, None, CEREMONY_MAX)
     }
 
     pub fn publish_receipt(&self, bytes: &[u8]) -> Result<(), MigrateError> {
@@ -180,15 +171,6 @@ impl DirTransport {
 
     pub fn wait_receipt_attestation(&self) -> Result<Vec<u8>, MigrateError> {
         self.wait_file(RECEIPT_ATTESTATION_FILE, None, ATTESTATION_MAX)
-    }
-
-    pub fn publish_target_ready(&self, bytes: &[u8]) -> Result<(), MigrateError> {
-        bounded_attestation(bytes)?;
-        self.write_new(TARGET_READY_FILE, bytes)
-    }
-
-    pub fn wait_target_ready(&self) -> Result<Vec<u8>, MigrateError> {
-        self.wait_file(TARGET_READY_FILE, None, ATTESTATION_MAX)
     }
 
     pub fn publish_source_stopped(&self, bytes: &[u8]) -> Result<(), MigrateError> {
@@ -294,16 +276,6 @@ impl DirTransport {
                 }
             }
         }
-    }
-}
-
-fn ceremony_name(name: &str) -> Result<(), MigrateError> {
-    if name == CUSTODY_MANIFEST_FILE {
-        Ok(())
-    } else {
-        Err(MigrateError::transport(format!(
-            "{name} is not a ceremony file"
-        )))
     }
 }
 
@@ -539,33 +511,15 @@ mod tests {
     }
 
     #[test]
-    fn ceremony_files_roundtrip_and_a_leftover_blocks_begin() {
+    fn custody_manifest_roundtrip_and_a_leftover_blocks_begin() {
         let dir = scratch("ceremony");
         let transport = DirTransport::open(&dir, Duration::from_millis(80)).unwrap();
-        let err = transport.publish_ceremony("notes.txt", b"no").unwrap_err();
-        assert!(err.to_string().contains("not a ceremony file"));
-
-        // The custody manifest is the only ceremony file on the channel.
-        let err = transport
-            .publish_ceremony(MINT_CONF_FILE, b"network = test")
-            .unwrap_err();
-        assert!(err.to_string().contains("not a ceremony file"));
-        let err = transport
-            .publish_ceremony(CEREMONY_STATE_FILE, b"state = 1")
-            .unwrap_err();
-        assert!(err.to_string().contains("not a ceremony file"));
-        transport
-            .publish_ceremony(CUSTODY_MANIFEST_FILE, b"birthday = 1")
-            .unwrap();
-        assert_eq!(
-            transport.wait_ceremony(CUSTODY_MANIFEST_FILE).unwrap(),
-            b"birthday = 1"
-        );
-
-        // A planted legacy file still blocks the attempt from starting.
-        fs::write(dir.join(MINT_CONF_FILE), b"network = test").unwrap();
+        transport.publish_custody_manifest(b"birthday = 1").unwrap();
+        assert_eq!(transport.wait_custody_manifest().unwrap(), b"birthday = 1");
         let err = transport.source_begin().unwrap_err();
-        assert!(err.to_string().contains("already contains zns_mint.conf"));
+        assert!(err
+            .to_string()
+            .contains("already contains zns_custody_manifest.toml"));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -78,7 +78,7 @@ pub fn run(
 
     let transfer_bytes = transport.wait_encrypted_seed()?;
     let source_report = transport.wait_source_attestation()?;
-    let custody_manifest = transport.wait_ceremony(transport::CUSTODY_MANIFEST_FILE)?;
+    let custody_manifest = transport.wait_custody_manifest()?;
     let transfer = handoff::decode_transfer(&transfer_bytes)?;
     let expected = handoff::transfer_report_data(&offer, &transfer, &custody_manifest);
     let source = attest::verified_report(&source_report, &expected)?;

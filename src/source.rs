@@ -105,7 +105,7 @@ pub fn run(
     )?;
     transport.publish_encrypted_seed(&handoff::encode_transfer(&transfer))?;
     transport.publish_source_attestation(source_report.as_bytes())?;
-    transport.publish_ceremony(transport::CUSTODY_MANIFEST_FILE, &custody_manifest)?;
+    transport.publish_custody_manifest(&custody_manifest)?;
     info!("seed wrapped; plaintext dropped");
 
     let receipt = wait_peer(transport.wait_receipt())?;

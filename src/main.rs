@@ -45,7 +45,7 @@ where
         }
         Command::Run(args) => {
             let _ = tracing_subscriber::fmt().with_target(false).try_init();
-            execute(*args)
+            execute(args)
         }
     }
 }
@@ -53,19 +53,12 @@ where
 pub(crate) fn execute(args: cli::Args) -> Result<(), MigrateError> {
     let loaded = manifest::load(&args.manifest)?;
     let channel = transport::DirTransport::open(&args.transport_dir, args.timeout)?;
-    for (path, kind) in [
-        (args.manifest.as_path(), "manifest"),
-        (args.upgrade_document.as_path(), "upgrade document"),
-        (args.attestation_bundle.as_path(), "attestation bundle"),
-    ] {
-        transport::trusted_outside_transport(path, channel.dir(), kind)?;
-    }
     manifest::authorize(&loaded, &args.upgrade_document, &args.attestation_bundle)?;
     // Cutover handles no seed, so it derives no sealing key.
     if args.cutover {
         return match args.role {
-            cli::Role::Source => cutover::source(&args, &loaded, &channel),
-            cli::Role::Target => cutover::target(&args, &loaded, &channel),
+            cli::Role::Source => cutover::source(&loaded, &channel),
+            cli::Role::Target => cutover::target(&loaded, &channel),
         };
     }
     // Migration attests every step, so it runs only on the enclave: derive

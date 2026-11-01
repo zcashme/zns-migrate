@@ -14,8 +14,7 @@ USAGE:
                        --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
                        --output-capsule <PATH> [--replace-after-verified-migration]
     zns-migrate cutover source|target --manifest <TOML> --upgrade-document <BYTES> \\
-                       --attestation-bundle <BUNDLE> --transport-dir <DIR> \\
-                       --hold <PATH> --after <PATH>
+                       --attestation-bundle <BUNDLE> --transport-dir <DIR>
 
 Source and target may start in either order. Target waits until source marks
 the transport directory, then publishes an attested offer before source
@@ -32,14 +31,11 @@ unseals anything. The directory is an untrusted one-shot channel:
 
 Source copies the custody manifest in the open from the input capsule's
 directory and publishes it beside the ciphertext; it is the only ceremony
-file on the channel. A leftover zns_mint.conf or ceremony_state.toml in
-the channel blocks the attempt from starting. The seed stays sealed.
+file on the channel. The seed stays sealed.
 Use a fresh directory for each attempt. The capsule stays outside it.
 Target will not overwrite an existing capsule unless
 --replace-after-verified-migration is set.
 
---transport dir:<DIR> is the same channel as --transport-dir.
---transport unix:<PATH> is not implemented.
 --timeout-secs <N> is how long to wait for the peer (default 120, max 86400).
 
 The manifest TOML, the canonical upgrade document, and the Sigstore bundle
@@ -58,17 +54,15 @@ and that receipt, and the report measurement equals to_measurement and its
 guest policy equals to_guest_policy.
 
 cutover runs after a finished handoff to another release, on the same
-channel. The source mint serves while the target syncs.
+channel. It adds one file:
 
-    target_ready_attestation.bin
     source_stopped_attestation.bin
 
-cutover target waits for --after, then publishes a report over the offer and
-the receipt. It waits for the source's report, then removes --hold.
-cutover source waits for the target's report, checks it against
-to_measurement and to_guest_policy, removes --after, and writes --hold. It
-waits for --after to appear again, then publishes its report. Target checks that against from_measurement and
-from_guest_policy. A rerun does not publish a report twice.
+cutover source publishes a report over the offer and the receipt. Run it
+only once this guest's mint has stopped for good. cutover target waits for
+that report and requires its measurement to equal from_measurement and its
+guest policy to equal from_guest_policy. Start the target mint only after it
+succeeds. A rerun does not publish the report twice.
 ";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -92,14 +86,12 @@ pub struct Args {
     pub replace_after_verified_migration: bool,
     pub timeout: Duration,
     pub cutover: bool,
-    pub hold: Option<PathBuf>,
-    pub after: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 pub enum Command {
     Help,
-    Run(Box<Args>),
+    Run(Args),
 }
 
 pub fn parse<I, S>(args: I) -> Result<Command, MigrateError>
@@ -134,8 +126,6 @@ where
     let mut output_capsule = None;
     let mut replace = false;
     let mut timeout = DEFAULT_TIMEOUT;
-    let mut hold = None;
-    let mut after = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -156,10 +146,6 @@ where
                 "transport",
                 value("--transport-dir", &mut args)?,
             )?,
-            "--transport" => {
-                let spec = value("--transport", &mut args)?;
-                set_once(&mut transport_dir, "transport", parse_transport(&spec)?)?;
-            }
             "--input-capsule" => set_once(
                 &mut input_capsule,
                 "--input-capsule",
@@ -170,8 +156,6 @@ where
                 "--output-capsule",
                 value("--output-capsule", &mut args)?,
             )?,
-            "--hold" => set_once(&mut hold, "--hold", value("--hold", &mut args)?)?,
-            "--after" => set_once(&mut after, "--after", value("--after", &mut args)?)?,
             "--replace-after-verified-migration" => {
                 if replace {
                     return Err(MigrateError::usage(
@@ -206,22 +190,12 @@ where
     let transport_dir =
         transport_dir.ok_or_else(|| MigrateError::usage("--transport-dir is required"))?;
 
-    if cutover {
-        if input_capsule.is_some() || output_capsule.is_some() || replace {
-            return Err(MigrateError::usage("cutover does not take a capsule"));
-        }
-        if hold.is_none() {
-            return Err(MigrateError::usage("--hold is required"));
-        }
-        if after.is_none() {
-            return Err(MigrateError::usage("--after is required"));
-        }
-    } else if hold.is_some() || after.is_some() {
-        return Err(MigrateError::usage("--hold and --after are for cutover"));
-    }
-
     match role {
-        _ if cutover => {}
+        _ if cutover => {
+            if input_capsule.is_some() || output_capsule.is_some() || replace {
+                return Err(MigrateError::usage("cutover does not take a capsule"));
+            }
+        }
         Role::Source => {
             if output_capsule.is_some() {
                 return Err(MigrateError::usage("source does not take --output-capsule"));
@@ -245,7 +219,7 @@ where
         }
     }
 
-    Ok(Command::Run(Box::new(Args {
+    Ok(Command::Run(Args {
         role,
         manifest: PathBuf::from(manifest),
         upgrade_document: PathBuf::from(upgrade_document),
@@ -256,9 +230,7 @@ where
         replace_after_verified_migration: replace,
         timeout,
         cutover,
-        hold: hold.map(PathBuf::from),
-        after: after.map(PathBuf::from),
-    })))
+    }))
 }
 
 fn set_once(slot: &mut Option<String>, flag: &str, value: String) -> Result<(), MigrateError> {
@@ -281,23 +253,6 @@ fn value(flag: &str, args: &mut impl Iterator<Item = String>) -> Result<String, 
     Ok(value)
 }
 
-fn parse_transport(spec: &str) -> Result<String, MigrateError> {
-    if let Some(path) = spec.strip_prefix("dir:") {
-        if path.is_empty() {
-            return Err(MigrateError::usage("--transport dir: needs a directory"));
-        }
-        return Ok(path.to_string());
-    }
-    if spec.starts_with("unix:") {
-        return Err(MigrateError::usage(
-            "unix transport is not implemented; use --transport-dir",
-        ));
-    }
-    Err(MigrateError::usage(format!(
-        "--transport {spec} is not a dir: path"
-    )))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,8 +268,8 @@ mod tests {
             "upgrade.bin",
             "--attestation-bundle",
             "bundle.jsonl",
-            "--transport",
-            "dir:/migration",
+            "--transport-dir",
+            "/migration",
             "--input-capsule",
             "/state/keys/zns_seed.capsule",
             "--timeout-secs",
@@ -353,19 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unix_transport_and_a_source_overwrite_flag() {
-        let err = parse([
-            "zns-migrate",
-            "target",
-            "--transport",
-            "unix:/migration/zns-migrate.sock",
-        ])
-        .unwrap_err();
-        assert!(err.is_usage());
-        assert!(err
-            .to_string()
-            .contains("unix transport is not implemented"));
-
+    fn rejects_a_source_overwrite_flag() {
         let err = parse([
             "zns-migrate",
             "source",
@@ -387,69 +330,25 @@ mod tests {
 
     #[test]
     fn parses_cutover() {
-        let Command::Run(args) = parse([
+        let base = [
             "zns-migrate",
             "cutover",
             "target",
             "--manifest",
-            "upgrade.toml",
+            "m",
             "--upgrade-document",
-            "upgrade.bin",
+            "d",
             "--attestation-bundle",
-            "bundle.jsonl",
+            "b",
             "--transport-dir",
             "/migration",
-            "--hold",
-            "/state/migrate-source.hold",
-            "--after",
-            "/run/zebra-ready",
-        ])
-        .unwrap() else {
+        ];
+        let Command::Run(args) = parse(base).unwrap() else {
             panic!("cutover command");
         };
         assert!(args.cutover);
         assert_eq!(args.role, Role::Target);
-        assert_eq!(args.after, Some(PathBuf::from("/run/zebra-ready")));
-
-        let base = [
-            "zns-migrate",
-            "cutover",
-            "source",
-            "--manifest",
-            "m",
-            "--upgrade-document",
-            "d",
-            "--attestation-bundle",
-            "b",
-            "--transport-dir",
-            "t",
-        ];
-        let err = parse(base.iter().chain(&["--hold", "h"])).unwrap_err();
-        assert!(err.to_string().contains("--after is required"));
-        let err =
-            parse(
-                base.iter()
-                    .chain(&["--hold", "h", "--after", "a", "--input-capsule", "c"]),
-            )
-            .unwrap_err();
+        let err = parse(base.iter().chain(&["--output-capsule", "c"])).unwrap_err();
         assert!(err.to_string().contains("does not take a capsule"));
-        let err = parse([
-            "zns-migrate",
-            "source",
-            "--manifest",
-            "m",
-            "--upgrade-document",
-            "d",
-            "--attestation-bundle",
-            "b",
-            "--transport-dir",
-            "t",
-            "--input-capsule",
-            "c",
-            "--hold",
-            "h",
-        ])
-        .unwrap_err();
-        assert!(err.to_string().contains("for cutover"));
     }
 }

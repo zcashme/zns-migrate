@@ -54,7 +54,7 @@ zns-migrate source \
 
 Target publishes an X25519 offer and an SNP report over that offer. Source checks that report's measurement against `to_measurement` and its guest policy against `to_guest_policy`. It then checks its own measurement and guest policy against `from_measurement` and `from_guest_policy`, and checks that the capsule file hash and header fingerprint are the ones named in the manifest. Only then does it unwrap the seed. It encrypts the seed to the target key and publishes a second report over the offer, the ciphertext, and the custody manifest copied beside the capsule.
 
-Source publishes only the custody manifest, which the transfer report binds alongside the offer and the ciphertext. Target decrypts only when that report matches, its measurement is `from_measurement`, and its guest policy is `from_guest_policy`. It installs only the custody manifest beside the new capsule. It seals a new capsule, reads that file back, and unseals it again. The receipt and a report over the receipt are written only when the reopened seed matches. Source accepts the receipt only when that report matches, its measurement is `to_measurement`, and its guest policy is `to_guest_policy`. A leftover `zns_mint.conf` or `ceremony_state.toml` in the channel blocks the attempt from starting.
+Source publishes only the custody manifest, which the transfer report binds alongside the offer and the ciphertext. Target decrypts only when that report matches, its measurement is `from_measurement`, and its guest policy is `from_guest_policy`. It installs only the custody manifest beside the new capsule. It seals a new capsule, reads that file back, and unseals it again. The receipt and a report over the receipt are written only when the reopened seed matches. Source accepts the receipt only when that report matches, its measurement is `to_measurement`, and its guest policy is `to_guest_policy`.
 
 Target leaves an existing capsule in place unless `--replace-after-verified-migration` is set. Source leaves its original capsule on disk after it exits. A finished run copies the seed: both guests can still unseal it. Retiring the source capsule is not done yet.
 
@@ -62,17 +62,17 @@ The attested manifest includes `sequence`. This binary does not compare it with 
 
 ## Cutover
 
-After a handoff to another release, the source mint can serve while the target syncs. `cutover` hands over the mint on the same channel, so only one guest serves at a time.
+After a handoff to another release, the source mint keeps serving while the target syncs. `cutover` adds one attested message: the source mint has stopped for good.
 
 ```bash
-# Target: --after appears when Zebra is ready
-zns-migrate cutover target ... --hold /state/migrate-source.hold --after /run/zebra-ready
+# Current guest, once its mint has stopped for good
+zns-migrate cutover source --manifest ... --upgrade-document ... --attestation-bundle ... --transport-dir /migration
 
-# Source: --after appears when mint has stopped
-zns-migrate cutover source ... --hold /state/migrate-source.hold --after /run/mint-stopped
+# Next guest: start mint only after this succeeds
+zns-migrate cutover target --manifest ... --upgrade-document ... --attestation-bundle ... --transport-dir /migration
 ```
 
-Target publishes `target_ready_attestation.bin`, a `to_measurement` report over the offer and the receipt. Source checks it, removes `--after`, writes `--hold`, waits for `--after` to appear again, then publishes `source_stopped_attestation.bin`, a `from_measurement` report over the same bytes. Target checks that and removes `--hold`. The host can delay either step but cannot fake one. Both sides can rerun after a reboot.
+Source publishes `source_stopped_attestation.bin`, a `from_measurement` report over the offer and the receipt. Target checks it. Only this step is attested: a forged one could let two mints serve. When to stop the source mint, and the hold that keeps the target mint off, belong to the caller.
 
 ## Build
 
