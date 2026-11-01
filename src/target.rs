@@ -7,6 +7,7 @@
 //! published only after the resealed capsule unseals to the same seed,
 //! attested for `to_measurement`.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use rand::rngs::SysRng;
@@ -157,12 +158,17 @@ pub fn run(
 }
 
 fn guard_outputs(output: &Path, replace: bool) -> Result<(), MigrateError> {
+    if output.file_name() == Some(OsStr::new(ATTESTATION_FILE)) {
+        return Err(MigrateError::usage(format!(
+            "--output-capsule cannot be named {ATTESTATION_FILE}; that name is the attestation"
+        )));
+    }
     persist::guard_output(output, replace)?;
     let dir = persist::containing_dir(output);
-    persist::guard_output(&dir.join(transport::CUSTODY_MANIFEST_FILE), replace)
+    persist::guard_output(&dir.join(transport::CUSTODY_MANIFEST_FILE), replace)?;
+    persist::guard_output(&dir.join(ATTESTATION_FILE), replace)
 }
 
-/// The custody manifest beside the capsule, public (0644) like keygen writes it.
 /// The mint refuses to boot without `keys/zns_attestation.bin`, a report that
 /// covers the capsule file on disk. A migration target seals its own capsule,
 /// so the report has to come from this guest, over the capsule it persisted.
@@ -185,6 +191,7 @@ fn install_attestation(
     Ok(())
 }
 
+/// The custody manifest beside the capsule, public (0644) like keygen writes it.
 fn stage_custody_manifest(
     capsule: &Path,
     bytes: &[u8],
